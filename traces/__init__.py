@@ -12,17 +12,14 @@ traces/
     print_3c_report(result, total_accesses=len(addrs))
 """
 
-from .traces.generator import (
-    sequential,
-    random_trace,
-    matrix,
-    thrash,
-    generate,
-    save_trace,
-    load_trace,
-    save_trace_text,
-    load_trace_text,
-    GENERATORS,
+from .generators import (
+    gen_sequential,
+    gen_random,
+    gen_matrix,
+    gen_thrash,
+    gen_pointer_chase,
+    list_traces,
+    make_trace,
 )
 
 from .analysis import (
@@ -33,17 +30,14 @@ from .analysis import (
 )
 
 __all__ = [
-    # generator
-    "sequential",
-    "random_trace",
-    "matrix",
-    "thrash",
-    "generate",
-    "save_trace",
-    "load_trace",
-    "save_trace_text",
-    "load_trace_text",
-    "GENERATORS",
+    # generator helpers
+    "gen_sequential",
+    "gen_random",
+    "gen_matrix",
+    "gen_thrash",
+    "gen_pointer_chase",
+    "list_traces",
+    "make_trace",
     # analysis
     "classify_3c",
     "total_misses",
