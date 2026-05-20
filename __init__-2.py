@@ -16,7 +16,7 @@ from .generators import (
     list_traces,
     make_trace,
 )
-from .analysis import classify_3c
+from .traces.analysis import classify_3c
 
 __all__ = [
     "gen_sequential",
