@@ -1,158 +1,210 @@
 """
-traces/analysis.py — 3C miss classification.
+traces/analysis.py
+------------------
+3C-классификация промахов кэша.
 
-NOTE for Person #2:
-    Это рабочая заглушка с **точно той сигнатурой**, которую
-    ожидает viz/demo.py и main.py:
+Три вида промахов:
+  Compulsory (cold)  — первое обращение к блоку (unavoidable)
+  Capacity           — промах из-за недостаточного размера кэша
+                       (пропал бы даже в fully-associative кэше того же размера)
+  Conflict           — промах из-за ограниченной ассоциативности
+                       (не пропал бы в fully-associative кэше)
 
-        classify_3c(addrs, size_bytes, associativity, block_size) -> dict
+Алгоритм
+--------
+1. Compulsory: отслеживаем множество уже виденных блоков.
+   Первое обращение → compulsory miss.
 
-    Внутри написана корректная (хоть и базовая) классификация
-    Compulsory / Capacity / Conflict по классическому методу
-    Hill–Smith:
-        compulsory  = первый доступ к блоку
-        capacity    = miss, который остался бы miss и в fully-associative
-                      кэше того же размера
-        conflict    = остальные miss-ы (т.е. fix-able большей ассоциативностью)
+2. Capacity: симулируем идеальный fully-associative LRU кэш размером size_bytes.
+   Промах в FA = capacity miss (уже не compulsory).
 
-    Можешь либо оставить эту реализацию (она правильная),
-    либо заменить более продвинутой версией — главное, сохрани
-    сигнатуру и ключи возврата.
+3. Conflict: симулируем реальный set-associative LRU кэш.
+   Промах в SA, которого не было в FA = conflict miss.
+
+Интерфейс
+---------
+classify_3c(addrs, size_bytes, associativity, block_size) -> dict
 """
 
 from __future__ import annotations
-import math
 from collections import OrderedDict
-from typing import List, Dict
 
 
-# ─── helpers ─────────────────────────────────────────────────────────────
+# ───────────────────────────── LRU симулятор ───────────────────────
 
-def _block_of(addr: int, block_size: int) -> int:
-    return addr // block_size
+class _LRUCache:
+    """
+    Простой LRU-кэш на OrderedDict.
+    capacity — максимальное число блоков (строк) в кэше.
+    """
 
-
-# ─── tiny LRU fully-associative cache (just for the capacity oracle) ─────
-
-class _FullyAssocLRU:
-    """A fully-associative LRU of `nblocks` blocks (block-granularity only)."""
-
-    def __init__(self, nblocks: int):
-        self.nblocks = max(1, nblocks)
-        self._od: "OrderedDict[int, None]" = OrderedDict()
+    def __init__(self, capacity: int) -> None:
+        if capacity <= 0:
+            raise ValueError("capacity должна быть > 0")
+        self.capacity = capacity
+        self._store: OrderedDict[int, None] = OrderedDict()
 
     def access(self, block_id: int) -> bool:
-        """Return True on hit, False on miss; updates LRU order."""
-        if block_id in self._od:
-            self._od.move_to_end(block_id)
+        """
+        Обратиться к block_id.
+        Возвращает True если HIT, False если MISS.
+        """
+        if block_id in self._store:
+            self._store.move_to_end(block_id)
             return True
-        # miss
-        self._od[block_id] = None
-        if len(self._od) > self.nblocks:
-            self._od.popitem(last=False)
+        # MISS — загрузить блок
+        if len(self._store) >= self.capacity:
+            self._store.popitem(last=False)   # вытеснить LRU
+        self._store[block_id] = None
         return False
 
 
-# ─── tiny set-associative LRU (for the "actual" pass) ────────────────────
+class _SetAssocLRUCache:
+    """
+    Set-associative LRU кэш.
+    Число сетов = (size_bytes // block_size) // associativity
+    """
 
-class _SetAssocLRU:
-    """Set-associative LRU with the exact same geometry as `core.CacheLevel`."""
-
-    def __init__(self, size_bytes: int, associativity: int, block_size: int):
-        # tolerate degenerate configs (round up to 1 set)
-        num_sets = max(1, size_bytes // (associativity * block_size))
-        self.num_sets = num_sets
-        self.assoc    = associativity
-        self.block    = block_size
-        self._sets: List["OrderedDict[int, None]"] = [
-            OrderedDict() for _ in range(num_sets)
+    def __init__(self, size_bytes: int, associativity: int, block_size: int) -> None:
+        self.block_size = block_size
+        total_blocks = size_bytes // block_size
+        if total_blocks <= 0:
+            raise ValueError("size_bytes слишком мал")
+        self.num_sets = max(1, total_blocks // associativity)
+        self.ways = associativity
+        # один LRU на каждый сет
+        self._sets: list[_LRUCache] = [
+            _LRUCache(self.ways) for _ in range(self.num_sets)
         ]
 
-    def _parse(self, block_id: int):
+    def access(self, addr: int) -> bool:
+        block_id = addr // self.block_size
         set_idx = block_id % self.num_sets
-        tag     = block_id // self.num_sets
-        return set_idx, tag
-
-    def access(self, block_id: int) -> bool:
-        s, tag = self._parse(block_id)
-        bucket = self._sets[s]
-        if tag in bucket:
-            bucket.move_to_end(tag)
-            return True
-        bucket[tag] = None
-        if len(bucket) > self.assoc:
-            bucket.popitem(last=False)
-        return False
+        tag = block_id // self.num_sets
+        return self._sets[set_idx].access(tag)
 
 
-# ─── public API ──────────────────────────────────────────────────────────
+class _FullyAssocLRUCache:
+    """
+    Fully-associative LRU кэш (один сет на весь кэш).
+    """
+
+    def __init__(self, size_bytes: int, block_size: int) -> None:
+        self.block_size = block_size
+        total_blocks = max(1, size_bytes // block_size)
+        self._lru = _LRUCache(total_blocks)
+
+    def access(self, addr: int) -> bool:
+        block_id = addr // self.block_size
+        return self._lru.access(block_id)
+
+
+# ───────────────────────────── основной API ─────────────────────────
 
 def classify_3c(
-    addrs: List[int],
+    addrs: list[int],
     size_bytes: int,
     associativity: int,
     block_size: int,
-) -> Dict[str, int]:
+) -> dict:
     """
-    Classify every miss in `addrs` as Compulsory, Capacity, or Conflict.
+    Классифицировать промахи по типам Compulsory / Capacity / Conflict.
 
-    Method (Hill–Smith 3C model):
-        1.  pass through the actual set-associative LRU cache → record misses
-        2.  pass through a fully-associative LRU cache of the same total size
-            (same #blocks) → its misses are Compulsory + Capacity
-        3.  the very first access to any block is Compulsory; the remaining
-            FA-misses are Capacity; everything that is a miss in (1) but a hit
-            in (2) is a Conflict miss.
-
-    Parameters
+    Параметры
     ----------
-    addrs           : list of byte addresses
-    size_bytes      : total cache size in bytes
-    associativity   : number of ways
-    block_size      : line size in bytes
+    addrs         : список адресов из трассы (каждый int — байтовый адрес)
+    size_bytes    : размер кэша в байтах (напр. 32 * 1024 для 32 KB)
+    associativity : ассоциативность (напр. 4 для 4-way)
+    block_size    : размер кэш-линии в байтах (напр. 64)
 
-    Returns
-    -------
-    {"compulsory": int, "capacity": int, "conflict": int}
+    Возвращает
+    ----------
+    dict со следующими ключами:
+        "compulsory" : int  — число cold-промахов
+        "capacity"   : int  — число capacity-промахов
+        "conflict"   : int  — число conflict-промахов
+
+    Сумма compulsory + capacity + conflict == полное число промахов
+    в симулируемом SA-кэше.
     """
-    if not addrs:
-        return {"compulsory": 0, "capacity": 0, "conflict": 0}
-
-    nblocks = max(1, size_bytes // block_size)
-
-    actual = _SetAssocLRU(size_bytes, associativity, block_size)
-    fa     = _FullyAssocLRU(nblocks)
-
     seen_blocks: set[int] = set()
+    fa_cache = _FullyAssocLRUCache(size_bytes, block_size)
+    sa_cache = _SetAssocLRUCache(size_bytes, associativity, block_size)
+
     compulsory = 0
     capacity   = 0
     conflict   = 0
 
-    for a in addrs:
-        b = _block_of(a, block_size)
+    for addr in addrs:
+        block_id = addr // block_size
 
-        actual_hit = actual.access(b)
-        fa_hit     = fa.access(b)
+        hit_sa = sa_cache.access(addr)
+        hit_fa = fa_cache.access(addr)
+        is_new = block_id not in seen_blocks
 
-        if b not in seen_blocks:
-            seen_blocks.add(b)
-            compulsory += 1
-            # compulsory is also a miss in both caches; we don't double-count.
+        if is_new:
+            seen_blocks.add(block_id)
+
+        if hit_sa:
+            # SA hit → нет промаха вообще
             continue
 
-        # block has been seen before, so it is NOT compulsory.
-        if not actual_hit:
-            # it's a miss in the real cache
-            if fa_hit:
-                # but it would have hit in a fully-associative cache
-                # of the same size → conflict miss
-                conflict += 1
-            else:
-                # would miss even with full associativity → capacity miss
-                capacity += 1
+        # SA miss — определяем тип
+        if is_new:
+            compulsory += 1
+        elif not hit_fa:
+            # FA тоже промахнулся → capacity
+            capacity += 1
+        else:
+            # FA попал, SA промахнулся → conflict
+            conflict += 1
 
     return {
         "compulsory": compulsory,
         "capacity":   capacity,
         "conflict":   conflict,
     }
+
+
+# ───────────────────────────── утилиты ──────────────────────────────
+
+def total_misses(result: dict) -> int:
+    """Суммарное число промахов из результата classify_3c."""
+    return result["compulsory"] + result["capacity"] + result["conflict"]
+
+
+def miss_percentages(result: dict) -> dict[str, float]:
+    """
+    Вернуть процентное соотношение каждого типа промахов.
+    Если промахов нет — вернуть нули.
+    """
+    total = total_misses(result)
+    if total == 0:
+        return {"compulsory": 0.0, "capacity": 0.0, "conflict": 0.0}
+    return {k: 100.0 * v / total for k, v in result.items()}
+
+
+def print_3c_report(
+    result: dict,
+    total_accesses: int | None = None,
+    label: str = "",
+) -> None:
+    """Вывести красивый текстовый отчёт о 3C-анализе."""
+    header = f"=== 3C Analysis{': ' + label if label else ''} ==="
+    print(header)
+
+    total = total_misses(result)
+    pct = miss_percentages(result)
+
+    print(f"  Compulsory (cold) : {result['compulsory']:>8,}  ({pct['compulsory']:5.1f}%)")
+    print(f"  Capacity          : {result['capacity']:>8,}  ({pct['capacity']:5.1f}%)")
+    print(f"  Conflict          : {result['conflict']:>8,}  ({pct['conflict']:5.1f}%)")
+    print(f"  ─────────────────────────────────────")
+    print(f"  Total misses      : {total:>8,}")
+
+    if total_accesses is not None and total_accesses > 0:
+        miss_rate = 100.0 * total / total_accesses
+        hit_rate  = 100.0 - miss_rate
+        print(f"  Hit rate          : {hit_rate:>7.2f}%")
+        print(f"  Miss rate         : {miss_rate:>7.2f}%")
+    print()
