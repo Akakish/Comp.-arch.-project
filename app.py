@@ -74,8 +74,10 @@ def _render_hierarchy_diagram(
                              linewidth=2,
                              zorder=1)
         ax.add_patch(rect)
-        ax.text(x + w / 2, y + h - 0.08, label,
-                ha="center", va="center", fontsize=12,
+        # Place label above the box instead of inside
+        label_y = y + h + 0.05
+        ax.text(x + w / 2, label_y, label,
+                ha="center", va="bottom", fontsize=12,
                 color="#F8FAFC", weight="bold")
 
     connectors = [
@@ -199,28 +201,28 @@ def main() -> None:
     st.title("Cache Hierarchy Simulator")
     st.markdown(
         """
-        **Интерактивный Python-дэшборд** для исследования и демонстрации работы
-        многослойной кеш-иерархии. Меняйте размеры, ассоциативность,
-        политику замещения и трассы, чтобы увидеть, как меняются
-        попадания, промахи и задержки.
+        **Interactive Python dashboard** for exploring and demonstrating
+        the behavior of a multi-level cache hierarchy. Adjust sizes,
+        associativity, replacement policies and trace patterns to see
+        how hits, misses and latencies change.
         """
     )
     st.markdown(
         """
-        ### Как пользоваться
-        1. Выберите трассу и длину.
-        2. Настройте параметры L1/L2/L3.
-        3. Выберите режим визуализации.
-        4. Нажмите «Выполнить симуляцию».
-        5. Смотрите графики и метрики справа.
+        ### How to use
+        1. Select a trace and length.
+        2. Configure L1/L2/L3 parameters.
+        3. Choose a visualization mode.
+        4. Click "Run simulation".
+        5. View charts and metrics on the right.
         """
     )
 
     with st.sidebar.form(key="config_form"):
-        st.subheader("Настройки симуляции")
-        trace_name = st.selectbox("Трасса", TRACE_OPTIONS, index=TRACE_OPTIONS.index("random"))
-        trace_length = st.slider("Длина трассы", min_value=200, max_value=10000, step=200, value=4000)
-        block_size = st.selectbox("Размер строки кеша", [16, 32, 64, 128], index=2)
+        st.subheader("Simulation settings")
+        trace_name = st.selectbox("Trace", TRACE_OPTIONS, index=TRACE_OPTIONS.index("random"))
+        trace_length = st.slider("Trace length", min_value=200, max_value=10000, step=200, value=4000)
+        block_size = st.selectbox("Cache line size", [16, 32, 64, 128], index=2)
 
         mode = st.selectbox(
             "Режим визуализации",
@@ -236,34 +238,34 @@ def main() -> None:
         )
 
         st.markdown("---")
-        st.subheader("Параметры уровней")
-        l1_size = st.selectbox("L1 размер", DEFAULT_SIZES, index=3)
-        l1_assoc = st.selectbox("L1 ассоциативность", DEFAULT_ASSOCS, index=2)
-        l1_policy = st.selectbox("L1 политика", POLICIES, index=0)
+        st.subheader("Level parameters")
+        l1_size = st.selectbox("L1 size", DEFAULT_SIZES, index=3)
+        l1_assoc = st.selectbox("L1 associativity", DEFAULT_ASSOCS, index=2)
+        l1_policy = st.selectbox("L1 policy", POLICIES, index=0)
 
-        l2_size = st.selectbox("L2 размер", DEFAULT_SIZES, index=5)
-        l2_assoc = st.selectbox("L2 ассоциативность", DEFAULT_ASSOCS, index=3)
-        l2_policy = st.selectbox("L2 политика", POLICIES, index=0)
+        l2_size = st.selectbox("L2 size", DEFAULT_SIZES, index=5)
+        l2_assoc = st.selectbox("L2 associativity", DEFAULT_ASSOCS, index=3)
+        l2_policy = st.selectbox("L2 policy", POLICIES, index=0)
 
-        l3_size = st.selectbox("L3 размер", DEFAULT_SIZES, index=8)
-        l3_assoc = st.selectbox("L3 ассоциативность", DEFAULT_ASSOCS, index=4)
-        l3_policy = st.selectbox("L3 политика", POLICIES, index=0)
+        l3_size = st.selectbox("L3 size", DEFAULT_SIZES, index=8)
+        l3_assoc = st.selectbox("L3 associativity", DEFAULT_ASSOCS, index=4)
+        l3_policy = st.selectbox("L3 policy", POLICIES, index=0)
 
         extra_sizes = st.multiselect(
-            "Размеры для sweep / heatmap",
+            "Sizes for sweep / heatmap",
             DEFAULT_SIZES,
             default=[4 * 1024, 16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024],
         )
         extra_assocs = st.multiselect(
-            "Ассоциативности для sweep / heatmap",
+            "Associativities for sweep / heatmap",
             DEFAULT_ASSOCS,
             default=[1, 2, 4, 8, 16],
         )
 
-        submitted = st.form_submit_button("Выполнить симуляцию")
+        submitted = st.form_submit_button("Run simulation")
 
     if not submitted:
-        st.info("Настройте параметры слева и нажмите «Выполнить симуляцию».")
+        st.info("Configure parameters on the left and click 'Run simulation'.")
         diagram_fig = _render_hierarchy_diagram(
             l1_size, l1_assoc, l1_policy,
             l2_size, l2_assoc, l2_policy,
@@ -274,11 +276,11 @@ def main() -> None:
         return
 
     trace = _cached_trace(trace_name, trace_length)
-    st.success(f"Трасса '{trace_name}' подготовлена: {len(trace)} обращений")
+    st.success(f"Trace '{trace_name}' ready: {len(trace)} accesses")
 
     left, right = st.columns([2, 1])
     with left:
-        st.subheader("Иерархия кеша")
+        st.subheader("Cache hierarchy")
         _show_fig(_render_hierarchy_diagram(
             l1_size, l1_assoc, l1_policy,
             l2_size, l2_assoc, l2_policy,
@@ -308,7 +310,7 @@ def main() -> None:
 
         elif mode == "Cache size sweep":
             if len(extra_sizes) < 2:
-                st.warning("Выберите как минимум два размера для sweep.")
+                st.warning("Select at least two sizes for the sweep.")
             else:
                 sizes, hit_rates = sweep_size(
                     trace,
@@ -322,7 +324,7 @@ def main() -> None:
 
         elif mode == "Associativity sweep":
             if len(extra_assocs) < 2:
-                st.warning("Выберите как минимум две ассоциативности.")
+                st.warning("Select at least two associativity values.")
             else:
                 assocs, hit_rates = sweep_assoc(
                     trace,
@@ -348,7 +350,7 @@ def main() -> None:
 
         elif mode == "Heatmap":
             if len(extra_sizes) < 2 or len(extra_assocs) < 2:
-                st.warning("Выберите минимум два размера и две ассоциативности для heatmap.")
+                st.warning("Select at least two sizes and two associativities for the heatmap.")
             else:
                 sizes, assocs, matrix = heatmap_size_x_assoc(
                     trace,
@@ -378,7 +380,7 @@ def main() -> None:
             )
 
         elif mode == "Access animation":
-            st.markdown("_Генерируем анимацию изменения hit-rate по мере выполнения трассы._")
+            st.markdown("_Generating hit-rate animation as the trace executes._")
             gif_bytes = _render_access_animation(
                 trace,
                 l1_size, l1_assoc,
@@ -388,30 +390,30 @@ def main() -> None:
                 l1_policy,
             )
             if gif_bytes is None:
-                st.error("Анимация недоступна. Установите pillow и запустите снова.")
+                st.error("Animation unavailable. Install pillow and run again.")
             else:
                 st.image(gif_bytes, format="GIF")
 
     with right:
-        st.subheader("Параметры трассы")
-        st.write(f"**Тип:** {trace_name}")
-        st.write(f"**Длина:** {len(trace)}")
-        st.write(f"**Размер строки:** {block_size} B")
+        st.subheader("Trace parameters")
+        st.write(f"**Type:** {trace_name}")
+        st.write(f"**Length:** {len(trace)}")
+        st.write(f"**Block size:** {block_size} B")
         st.markdown("---")
-        st.subheader("Поддерживаемые режимы")
+        st.subheader("Available modes")
         st.markdown(
-            "- Multilevel hierarchy: итоговые метрики L1/L2/L3 + MPKI\n"
-            "- Cache size sweep: сравнение hit-rate при разных размерах\n"
-            "- Associativity sweep: сравнение hit-rate при разной ассоциативности\n"
+            "- Multilevel hierarchy: final metrics for L1/L2/L3 + MPKI\n"
+            "- Cache size sweep: compare hit-rate across sizes\n"
+            "- Associativity sweep: compare hit-rate across associativities\n"
             "- Policy comparison: LRU / Clock / RRIP\n"
-            "- Heatmap: miss rate в зависимости от размера и ассоциативности\n"
-            "- 3C breakdown: классификация промахов Compulsory/Capacity/Conflict\n"
+            "- Heatmap: miss rate vs size and associativity\n"
+            "- 3C breakdown: classify misses as Compulsory/Capacity/Conflict\n"
         )
 
     st.markdown("---")
     st.caption(
-        "Приложение использует существующий core/ и traces/ модули проекта "
-        "для точной симуляции кеш-иерархии." 
+        "This app uses the existing core/ and traces/ modules in the project"
+        " for accurate cache-hierarchy simulation."
     )
 
 
