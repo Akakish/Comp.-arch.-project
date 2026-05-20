@@ -21,6 +21,15 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## Interactive dashboard
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+This dashboard uses the existing core simulation, trace generator, and visualization modules to let you tune cache sizes, associativity, replacement policy, and trace patterns in a polished GUI.
+
 ## AI tools used
 
 See [AI_USAGE.md](AI_USAGE.md).

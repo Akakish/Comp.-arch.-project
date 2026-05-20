@@ -1,2 +1,5 @@
 pytest>=7.0
 matplotlib>=3.7
+numpy>=1.24
+pillow>=10.0
+streamlit>=1.25
